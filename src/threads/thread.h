@@ -92,6 +92,7 @@ struct thread
 
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;              /* List element. */
+    int64_t wakeup_tick;
 
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
@@ -106,6 +107,9 @@ struct thread
    If true, use multi-level feedback queue scheduler.
    Controlled by kernel command-line option "-o mlfqs". */
 extern bool thread_mlfqs;
+/* List of processes in THREAD_BLOCKED state, that is, processes 
+   that are blocked. */
+static struct list sleep_list;
 
 void thread_init (void);
 void thread_start (void);
@@ -137,5 +141,9 @@ int thread_get_nice (void);
 void thread_set_nice (int);
 int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
+
+void thread_sleep(int64_t ticks);
+void thread_awake(int64_t ticks);
+void update_next_tick_to_awake(int64_t ticks);
 
 #endif /* threads/thread.h */
