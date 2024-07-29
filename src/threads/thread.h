@@ -93,6 +93,8 @@ struct thread
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;              /* List element. */
     int64_t wakeup_tick;
+    int nice;
+    int recent_cpu;
 
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
@@ -146,5 +148,11 @@ void thread_sleep (int64_t ticks);
 void thread_awake (int64_t ticks);
 void test_max_priority (void);
 bool compare_priority (const struct list_elem *a, const struct list_elem *b, void *aux UNUSED);
+
+void mlfqs_priority(struct thread *t);
+void mlfqs_recent_cpu(struct thread *t);
+void mlfqs_load_avg(void);
+void mlfqs_increment(void);
+void mlfqs_recalculate(void);
 
 #endif /* threads/thread.h */
