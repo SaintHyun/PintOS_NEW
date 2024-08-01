@@ -28,7 +28,7 @@ static bool load (const char *cmdline, void (**eip) (void), void **esp);
 tid_t
 process_execute (const char *file_name) 
 {
-  char *fn_copy;
+  char *fn_copy, *ptr;
   tid_t tid;
 
   /* Make a copy of FILE_NAME.
@@ -36,7 +36,9 @@ process_execute (const char *file_name)
   fn_copy = palloc_get_page (0);
   if (fn_copy == NULL)
     return TID_ERROR;
-  strlcpy (fn_copy, file_name, PGSIZE);
+
+  strlcpy(fn_copy, file_name, PGSIZE);
+  strtok_r(file_name, " ", &ptr);
 
   /* Create a new thread to execute FILE_NAME. */
   tid = thread_create (file_name, PRI_DEFAULT, start_process, fn_copy);
@@ -50,17 +52,34 @@ process_execute (const char *file_name)
 static void
 start_process (void *file_name_)
 {
-  char *file_name = file_name_;
+  char *file_name = file_name_, *argv[128], *ptr, *tok;
+  int argc;
   struct intr_frame if_;
   bool success;
+
+  tok = (char *)malloc(sizeof(char) * (strlen(file_name) + 1));
+  strlcpy(tok, file_name, strlen(file_name) + 1);
+  tok = strtok_r(tok, " ", &ptr);
+  argv[0] = (char *)malloc(sizeof(char) * (strlen(tok) + 1));
+  strlcpy(argv[0], tok, strlen(tok) + 1);
+
+  for (argc = 1;; argc++)
+  {
+    tok = strtok_r(NULL, " ", &ptr);
+    if (tok == NULL)
+      break;
+    argv[argc] = (char *)malloc(sizeof(char) * strlen(tok) + 1);
+    strlcpy(argv[argc], tok, strlen(tok) + 1);
+  }
 
   /* Initialize interrupt frame and load executable. */
   memset (&if_, 0, sizeof if_);
   if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
   if_.cs = SEL_UCSEG;
   if_.eflags = FLAG_IF | FLAG_MBS;
-  success = load (file_name, &if_.eip, &if_.esp);
-
+  success = load (argv[0], &if_.eip, &if_.esp);
+  argument_stack(argv, argc, &if_.esp);
+  
   /* If load failed, quit. */
   palloc_free_page (file_name);
   if (!success) 
@@ -76,6 +95,34 @@ start_process (void *file_name_)
   NOT_REACHED ();
 }
 
+void argument_stack(char **argv, int argc, void **esp)
+{
+  int byte = 0, i;
+  for (i = argc - 1; i >= 0; i--)
+  {
+    int arglen = strlen(argv[i]) + 1; // NULL 문자 포함
+    *esp -= arglen;                   // stack 사용
+    strlcpy(*esp, argv[i], arglen);   // stack에 삽입
+    byte += arglen;                   // 4byte alignment
+    argv[i] = *esp;                   // 주소도 쌓아야 함
+  }
+  int padding = byte % 4;
+  *esp -= padding;
+  *esp -= 4;
+  memset(*esp, 0, 4 + padding);
+  for (i = argc - 1; i >= 0; i--)
+  {
+    *esp -= 4;
+    **(char ***)esp = argv[i];
+  }
+  *esp -= 4;
+  **(char ***)esp = *esp + 4;
+  *esp -= 4;
+  **(int **)esp = argc;
+  *esp -= 4;
+  **(int **)esp = 0;
+}
+
 /* Waits for thread TID to die and returns its exit status.  If
    it was terminated by the kernel (i.e. killed due to an
    exception), returns -1.  If TID is invalid or if it was not a
@@ -88,7 +135,11 @@ start_process (void *file_name_)
 int
 process_wait (tid_t child_tid UNUSED) 
 {
-  return -1;
+  int i = 0;
+  while(1)
+  {
+    i++;
+  }
 }
 
 /* Free the current process's resources. */

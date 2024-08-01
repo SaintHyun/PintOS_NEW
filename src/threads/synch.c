@@ -115,9 +115,8 @@ void sema_up(struct semaphore *sema)
     thread_unblock(list_entry(list_pop_front(&sema->waiters), struct thread, elem));
   }
   sema->value++;
+  test_max_priority();
   intr_set_level(old_level);
-
-  thread_yield();
 }
 
 static void sema_test_helper(void *sema_);
@@ -193,7 +192,16 @@ void lock_acquire(struct lock *lock)
   ASSERT(!intr_context());
   ASSERT(!lock_held_by_current_thread(lock));
 
+  if (thread_mlfqs == false && lock->holder != NULL)
+  {
+    struct thread *cur = thread_current();
+    cur->wait_on_lock = lock;
+    list_insert_ordered(&lock->holder->donation_list, &cur->donation_elem, compare_donate_priority, NULL);
+    donate_priority();
+  }
+
   sema_down(&lock->semaphore);
+  thread_current()->wait_on_lock = NULL;
   lock->holder = thread_current();
 }
 
@@ -226,6 +234,11 @@ void lock_release(struct lock *lock)
   ASSERT(lock != NULL);
   ASSERT(lock_held_by_current_thread(lock));
 
+  if (thread_mlfqs == false)
+  {
+    remove_with_lock(lock);
+    refresh_priority();
+  }
   lock->holder = NULL;
   sema_up(&lock->semaphore);
 }
@@ -337,6 +350,5 @@ bool compare_sema_priority(const struct list_elem *a, const struct list_elem *b,
   struct list *list_a = &(sa->semaphore.waiters);
   struct list *list_b = &(sb->semaphore.waiters);
 
-  if(list_entry(list_begin(list_a), struct thread, elem)-> priority > list_entry(list_begin(list_b), struct thread, elem)->priority) return true;
-  else return false;
+  return list_entry(list_begin(list_a), struct thread, elem)->priority > list_entry(list_begin(list_b), struct thread, elem)->priority;
 }

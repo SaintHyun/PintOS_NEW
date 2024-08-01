@@ -60,6 +60,8 @@ static long long user_ticks;   /* # of timer ticks in user programs. */
 #define TIME_SLICE 4          /* # of timer ticks to give each thread. */
 static unsigned thread_ticks; /* # of timer ticks since last yield. */
 
+bool thread_prior_aging;
+
 /* If false (default), use round-robin scheduler.
    If true, use multi-level feedback queue scheduler.
    Controlled by kernel command-line option "-o mlfqs". */
@@ -204,11 +206,7 @@ tid_t thread_create(const char *name, int priority,
 
   /* Add to run queue. */
   thread_unblock(t);
-
-  if (t->priority > thread_current()->priority)
-  {
-    thread_yield();
-  }
+  test_max_priority();
 
   return tid;
 }
@@ -343,15 +341,10 @@ void thread_set_priority(int new_priority)
   if (thread_mlfqs == true)
     return;
 
-  thread_current()->priority = new_priority;
+  thread_current()->init_priority = new_priority;
 
-  if (list_empty(&ready_list) == true)
-    return;
-  struct thread *t = list_entry(list_begin(&ready_list), struct thread, elem);
-  if (t->priority > thread_current()->priority)
-  {
-    thread_yield();
-  }
+  refresh_priority();
+  test_max_priority();
 }
 
 /* Returns the current thread's priority. */
@@ -486,10 +479,17 @@ init_thread(struct thread *t, const char *name, int priority)
 
   old_level = intr_disable();
   list_push_back(&all_list, &t->allelem);
-
+  intr_set_level(old_level);
+  
+  t->wakeup_tick = 0;
+  /* MLFQS */
   t->nice = NICE_DEFAULT;
   t->recent_cpu = RECENT_CPU_DEFAULT;
-  intr_set_level(old_level);
+
+  /* Priority Donation */
+  t->wait_on_lock = NULL;
+  list_init(&(t->donation_list));
+  t->init_priority = priority;
 }
 
 /* Allocates a SIZE-byte frame at the top of thread T's stack and
@@ -615,7 +615,7 @@ void thread_sleep(int64_t ticks)
   ASSERT(cur != idle_thread);
 
   cur->wakeup_tick = ticks;
-  list_push_back(&sleep_list, &(cur->elem));
+  list_push_back(&sleep_list, &cur->elem);
   thread_block();
 
   intr_set_level(old_level);
@@ -652,8 +652,8 @@ void test_max_priority(void)
 {
   if (list_empty(&ready_list) == true)
     return;
-  struct thread *t = list_entry(list_begin(&ready_list), struct thread, elem);
-  if (t->priority > thread_current()->priority)
+  struct thread *t = list_entry(list_front(&ready_list), struct thread, elem);
+  if (!intr_context() && t->priority > thread_current()->priority)
   {
     thread_yield();
   }
@@ -661,10 +661,12 @@ void test_max_priority(void)
 
 bool compare_priority(const struct list_elem *a, const struct list_elem *b, void *aux UNUSED)
 {
-  if (list_entry(a, struct thread, elem)->priority > list_entry(b, struct thread, elem)->priority)
-    return true;
-  else
-    return false;
+  return list_entry(a, struct thread, elem)->priority > list_entry(b, struct thread, elem)->priority;
+}
+
+bool compare_donate_priority(const struct list_elem *a, const struct list_elem *b, void *aux UNUSED)
+{
+  return list_entry(a, struct thread, donation_elem)->priority > list_entry(b, struct thread, donation_elem)->priority;
 }
 
 void mlfqs_priority(struct thread *t)
@@ -708,5 +710,73 @@ void mlfqs_recalculate(void)
       t->recent_cpu = float_addition_int(float_multiple(float_divide(float_multiple_int(load_avg, 2), float_addition_int(float_multiple_int(load_avg, 2), 1)), t->recent_cpu), t->nice);
       t->priority = float_subtraction(float_subtraction(float_addition_int(0, PRI_MAX), float_divide_int(t->recent_cpu, 4)), float_multiple_int(float_addition_int(0, t->nice), 2)) / FRACTION;
     }
+  }
+}
+
+void donate_priority(void)
+{
+  struct thread *cur = thread_current(), *t;
+  int nested_depth = 0;
+  while (cur->wait_on_lock != NULL && nested_depth < 8)
+  {
+    t = cur->wait_on_lock->holder;
+    t->priority = cur->priority;
+    cur = t;
+    nested_depth++;
+  }
+}
+
+void remove_with_lock(struct lock *lock)
+{
+  struct thread *cur = thread_current();
+  struct thread *t;
+  struct list_elem *elem;
+
+  if (list_empty(&cur->donation_list) == true)
+  {
+    return;
+  }
+
+  for (elem = list_begin(&cur->donation_list); elem != list_end(&cur->donation_list);)
+  {
+    t = list_entry(elem, struct thread, donation_elem);
+    if (t->wait_on_lock == lock)
+    {
+      elem = list_remove(&t->donation_elem);
+    }
+    else
+    {
+      elem = list_next(elem);
+    }
+  }
+}
+
+void refresh_priority(void)
+{
+  struct thread *cur = thread_current();
+  struct thread *t;
+  cur->priority = cur->init_priority;
+
+  if (list_empty(&cur->donation_list) == true)
+    return;
+
+  list_sort(&cur->donation_list, compare_donate_priority, NULL);
+  t = list_entry(list_front(&cur->donation_list), struct thread, donation_elem);
+  if (t->priority > cur->priority)
+  {
+    cur->priority = t->priority;
+  }
+}
+
+void thread_aging(void)
+{
+  struct thread *t;
+  struct list_elem *elem;
+  if(list_empty(&all_list) == true) return;
+
+  for(elem = list_begin(&all_list); elem != list_end(&all_list); elem = list_next(elem))
+  {
+    t = list_entry(elem, struct thread, allelem);
+    mlfqs_priority(t);
   }
 }
