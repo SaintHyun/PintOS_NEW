@@ -490,6 +490,20 @@ init_thread(struct thread *t, const char *name, int priority)
   t->wait_on_lock = NULL;
   list_init(&(t->donation_list));
   t->init_priority = priority;
+
+#ifdef USERPROG
+  t->wait_status = 0;
+  sema_init(&(t->child_lock), 0);
+  sema_init(&(t->memory_lock), 0);
+  list_init(&(t->child_list));
+  list_push_back(&(running_thread()->child_list), &(t->child_elem));
+  for(int i=0; i<128; i++)
+  {
+    t->fd[i]=NULL;
+  }
+  t->parent = running_thread();
+  sema_init(&t->load_lock,0);
+#endif
 }
 
 /* Allocates a SIZE-byte frame at the top of thread T's stack and

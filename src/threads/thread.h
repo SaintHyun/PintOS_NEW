@@ -110,8 +110,17 @@ struct thread
     struct list_elem donation_elem;
 
 #ifdef USERPROG
-    /* Owned by userprog/process.c. */
     uint32_t *pagedir;                  /* Page directory. */
+    int exit_status;
+    int wait_status;
+    struct semaphore child_lock;
+    struct semaphore memory_lock;
+    struct list child_list;
+    struct list_elem child_elem;
+    struct thread *parent;
+    struct semaphore load_lock;
+    struct file *fd[128];
+    /* Owned by userprog/process.c. */
 #endif
 
     /* Owned by thread.c. */

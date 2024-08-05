@@ -9,4 +9,7 @@ void process_exit (void);
 void process_activate (void);
 void argument_stack(char **argv, int argc, void **esp);
 
+struct thread *get_child_process(int pid);
+void remove_child_process(struct thread *child);
+
 #endif /* userprog/process.h */
